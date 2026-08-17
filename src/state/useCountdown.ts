@@ -36,7 +36,10 @@ export function useCountdown({ initialMinutes, onComplete }: UseCountdownArgs) {
     setRemainingSeconds((prev) => prev + minutes * 60);
   }, []);
 
+  // Live value, unlike remainingSeconds which lags by up to one tick.
+  const getRemainingMs = useCallback(() => Math.max(0, endTimestampRef.current - Date.now()), []);
+
   const progress = totalSeconds > 0 ? 1 - remainingSeconds / totalSeconds : 0;
 
-  return { remainingSeconds, totalSeconds, progress, addMinutes };
+  return { remainingSeconds, totalSeconds, progress, addMinutes, getRemainingMs };
 }

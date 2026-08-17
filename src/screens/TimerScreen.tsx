@@ -1,9 +1,10 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native';
 import ArrowBackIcon from '../components/ArrowBackIcon';
 import ProgressBar from '../components/ProgressBar';
 import { formatClock } from '../format';
 import { condensedDisplay, pctX, pctY } from '../layout';
+import { cancelChime, ensureRung, scheduleChime, startTitleFlash, stopTitleFlash } from '../state/chime';
 import { useCountdown } from '../state/useCountdown';
 import { colors, fonts } from '../theme';
 
@@ -22,18 +23,40 @@ export default function TimerScreen({ presetMinutes, onBack, onStop, onComplete 
   onCompleteRef.current = onComplete;
 
   const handleAutoComplete = useCallback(() => {
+    ensureRung();
+    startTitleFlash();
     onCompleteRef.current(0, true);
   }, []);
 
-  const { remainingSeconds, progress, addMinutes } = useCountdown({
+  const { remainingSeconds, progress, addMinutes, getRemainingMs } = useCountdown({
     initialMinutes: presetMinutes,
     onComplete: handleAutoComplete,
   });
 
+  // Book the tone up front so it fires on time even in a throttled background tab.
+  useEffect(() => {
+    scheduleChime(getRemainingMs() / 1000);
+  }, [getRemainingMs]);
+
+  const handleAddMinutes = useCallback(
+    (minutes: number) => {
+      addMinutes(minutes);
+      scheduleChime(getRemainingMs() / 1000);
+    },
+    [addMinutes, getRemainingMs],
+  );
+
+  // Leaving the timer on purpose — nothing left to ring for.
+  const abandon = useCallback((leave: () => void) => {
+    cancelChime();
+    stopTitleFlash();
+    leave();
+  }, []);
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.canvas}>
-        <Pressable onPress={onBack} hitSlop={12} style={styles.backButton}>
+        <Pressable onPress={() => abandon(onBack)} hitSlop={12} style={styles.backButton}>
           <ArrowBackIcon size={32} />
         </Pressable>
 
@@ -51,7 +74,7 @@ export default function TimerScreen({ presetMinutes, onBack, onStop, onComplete 
         <View style={styles.mainButton}>
           <View style={styles.addRow}>
             {ADD_TIME_OPTIONS.map((minutes) => (
-              <Pressable key={minutes} style={styles.addCell} onPress={() => addMinutes(minutes)}>
+              <Pressable key={minutes} style={styles.addCell} onPress={() => handleAddMinutes(minutes)}>
                 <Text style={styles.addLabel}>+ {minutes} Min</Text>
               </Pressable>
             ))}
@@ -60,11 +83,11 @@ export default function TimerScreen({ presetMinutes, onBack, onStop, onComplete 
           <View style={styles.actionRow}>
             <Pressable
               style={styles.taskDoneCell}
-              onPress={() => onComplete(remainingSeconds, remainingSeconds <= 0)}
+              onPress={() => abandon(() => onComplete(remainingSeconds, remainingSeconds <= 0))}
             >
               <Text style={styles.taskDoneLabel}>Task Done !</Text>
             </Pressable>
-            <Pressable style={styles.stopCell} onPress={onStop}>
+            <Pressable style={styles.stopCell} onPress={() => abandon(onStop)}>
               <Text style={styles.stopLabel}>Stop !?</Text>
             </Pressable>
           </View>

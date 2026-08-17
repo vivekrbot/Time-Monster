@@ -10,6 +10,7 @@ import { StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 
 import HomeScreen from './src/screens/HomeScreen';
+import { unlockAudio } from './src/state/chime';
 import SplashScreen from './src/screens/SplashScreen';
 import TaskDoneScreen from './src/screens/TaskDoneScreen';
 import TimerScreen from './src/screens/TimerScreen';
@@ -48,6 +49,7 @@ export default function App() {
       {screen === 'home' && (
         <HomeScreen
           onStartTimer={(minutes) => {
+            unlockAudio(); // must happen inside the tap for autoplay policy
             setPresetMinutes(minutes);
             setScreen('timer');
           }}
@@ -74,6 +76,7 @@ export default function App() {
           onBack={() => setScreen('home')}
           onClose={() => setScreen('home')}
           onRepeat={() => {
+            unlockAudio();
             setPresetMinutes(doneState.presetMinutes);
             setScreen('timer');
           }}
