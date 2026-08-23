@@ -32,8 +32,10 @@ async function acquire() {
       return;
     }
     sentinel = acquired;
-    sentinel.addEventListener('release', () => {
-      sentinel = null;
+    acquired.addEventListener('release', () => {
+      // A stale lock's release event must not clear a newer one: on a fast stop/restart the old
+      // lock can settle after the new one is already held.
+      if (sentinel === acquired) sentinel = null;
     });
   } catch {
     // Denied, unsupported, or the document isn't visible yet — fine, silent no-op.
