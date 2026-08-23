@@ -6,6 +6,7 @@ import { formatClock } from '../format';
 import { condensedDisplay, pctX, pctY } from '../layout';
 import { cancelChime, ensureRung, scheduleChime, startTitleFlash, stopTitleFlash } from '../state/chime';
 import { useCountdown } from '../state/useCountdown';
+import { releaseWakeLock, requestWakeLock } from '../state/wakeLock';
 import { colors, fonts } from '../theme';
 
 const ADD_TIME_OPTIONS = [5, 10, 15];
@@ -37,6 +38,13 @@ export default function TimerScreen({ presetMinutes, onBack, onStop, onComplete 
   useEffect(() => {
     scheduleChime(getRemainingMs() / 1000);
   }, [getRemainingMs]);
+
+  // Held for the screen's whole lifetime — every exit path (back, Task Done, Stop, natural
+  // completion) unmounts this screen, so the cleanup here is the single release point.
+  useEffect(() => {
+    requestWakeLock();
+    return () => releaseWakeLock();
+  }, []);
 
   const handleAddMinutes = useCallback(
     (minutes: number) => {
