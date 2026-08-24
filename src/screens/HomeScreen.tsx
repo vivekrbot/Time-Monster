@@ -4,7 +4,8 @@ import OwlIcon from '../components/OwlIcon';
 import PresetGrid from '../components/PresetGrid';
 import SoundPicker from '../components/SoundPicker';
 import { pctX, pctY } from '../layout';
-import { DEFAULT_ALERT_SOUND, type AlertSoundId } from '../state/chime';
+import type { AlertSoundId } from '../state/chime';
+import { loadSoundPreference, saveSoundPreference } from '../state/soundPreference';
 import { colors, fonts } from '../theme';
 
 type Props = {
@@ -13,7 +14,12 @@ type Props = {
 
 export default function HomeScreen({ onStartTimer }: Props) {
   const [selected, setSelected] = useState<number | null>(null);
-  const [soundId, setSoundId] = useState<AlertSoundId>(DEFAULT_ALERT_SOUND);
+  const [soundId, setSoundId] = useState<AlertSoundId>(loadSoundPreference);
+
+  const handleSoundSelect = (id: AlertSoundId) => {
+    setSoundId(id);
+    saveSoundPreference(id);
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -29,7 +35,7 @@ export default function HomeScreen({ onStartTimer }: Props) {
 
         <View style={styles.mainButton}>
           <PresetGrid selected={selected} onSelect={setSelected} />
-          <SoundPicker selected={soundId} onSelect={setSoundId} />
+          <SoundPicker selected={soundId} onSelect={handleSoundSelect} />
           <Pressable
             style={[styles.setTimer, { opacity: selected === null ? 0.4 : 1 }]}
             disabled={selected === null}
