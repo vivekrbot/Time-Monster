@@ -2,15 +2,18 @@ import { useState } from 'react';
 import { Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native';
 import OwlIcon from '../components/OwlIcon';
 import PresetGrid from '../components/PresetGrid';
+import SoundPicker from '../components/SoundPicker';
 import { pctX, pctY } from '../layout';
+import { DEFAULT_ALERT_SOUND, type AlertSoundId } from '../state/chime';
 import { colors, fonts } from '../theme';
 
 type Props = {
-  onStartTimer: (minutes: number) => void;
+  onStartTimer: (minutes: number, soundId: AlertSoundId) => void;
 };
 
 export default function HomeScreen({ onStartTimer }: Props) {
   const [selected, setSelected] = useState<number | null>(null);
+  const [soundId, setSoundId] = useState<AlertSoundId>(DEFAULT_ALERT_SOUND);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -26,10 +29,11 @@ export default function HomeScreen({ onStartTimer }: Props) {
 
         <View style={styles.mainButton}>
           <PresetGrid selected={selected} onSelect={setSelected} />
+          <SoundPicker selected={soundId} onSelect={setSoundId} />
           <Pressable
             style={[styles.setTimer, { opacity: selected === null ? 0.4 : 1 }]}
             disabled={selected === null}
-            onPress={() => selected !== null && onStartTimer(selected)}
+            onPress={() => selected !== null && onStartTimer(selected, soundId)}
           >
             <Text style={styles.setTimerLabel}>Set Timer</Text>
           </Pressable>

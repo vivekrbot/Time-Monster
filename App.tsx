@@ -10,7 +10,7 @@ import { StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 
 import HomeScreen from './src/screens/HomeScreen';
-import { unlockAudio } from './src/state/chime';
+import { DEFAULT_ALERT_SOUND, unlockAudio, type AlertSoundId } from './src/state/chime';
 import SplashScreen from './src/screens/SplashScreen';
 import TaskDoneScreen from './src/screens/TaskDoneScreen';
 import TimerScreen from './src/screens/TimerScreen';
@@ -34,6 +34,7 @@ export default function App() {
 
   const [screen, setScreen] = useState<Screen>('splash');
   const [presetMinutes, setPresetMinutes] = useState(15);
+  const [soundId, setSoundId] = useState<AlertSoundId>(DEFAULT_ALERT_SOUND);
   const [doneState, setDoneState] = useState<DoneState | null>(null);
 
   if (!fontsLoaded) {
@@ -48,9 +49,10 @@ export default function App() {
 
       {screen === 'home' && (
         <HomeScreen
-          onStartTimer={(minutes) => {
+          onStartTimer={(minutes, chosenSoundId) => {
             unlockAudio(); // must happen inside the tap for autoplay policy
             setPresetMinutes(minutes);
+            setSoundId(chosenSoundId);
             setScreen('timer');
           }}
         />
@@ -59,6 +61,7 @@ export default function App() {
       {screen === 'timer' && (
         <TimerScreen
           presetMinutes={presetMinutes}
+          soundId={soundId}
           onBack={() => setScreen('home')}
           onStop={() => setScreen('home')}
           onComplete={(remainingSeconds, isFullCompletion) => {

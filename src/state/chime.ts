@@ -13,20 +13,39 @@ import { Platform } from 'react-native';
 
 const isWeb = Platform.OS === 'web' && typeof window !== 'undefined';
 
-const NOTES = [880, 1108.73, 1318.51]; // A5 / C#6 / E6
+// Library of alert sounds. Every preset shares the same envelope/timing knobs
+// below and differs only in which notes it plays, so the pre-scheduled,
+// throttle-proof scheduling in scheduleChime/ensureRung applies unchanged to
+// all of them. `classic` is byte-for-byte the arpeggio this app shipped with.
+export type AlertSoundId = 'classic' | 'gentle' | 'alert' | 'rising' | 'pulse';
+
+export const ALERT_SOUNDS: Record<AlertSoundId, { label: string; notes: number[] }> = {
+  classic: { label: 'Classic', notes: [880, 1108.73, 1318.51] }, // A5 / C#6 / E6
+  gentle: { label: 'Gentle', notes: [659.25, 783.99] }, // E5 / G5
+  alert: { label: 'Alert', notes: [1046.5, 830.61, 1046.5] }, // C6 / G#5 / C6
+  rising: { label: 'Rising', notes: [523.25, 659.25, 783.99, 987.77] }, // C5 -> B5
+  pulse: { label: 'Pulse', notes: [987.77, 987.77, 987.77] }, // B5 repeated
+};
+
+export const ALERT_SOUND_IDS: AlertSoundId[] = ['classic', 'gentle', 'alert', 'rising', 'pulse'];
+
+export const DEFAULT_ALERT_SOUND: AlertSoundId = 'classic';
+
 const NOTE_GAP = 0.18; // seconds between notes of one arpeggio
 const NOTE_LEN = 0.9; // seconds for a single note to decay to silence
 const REPEATS = 3;
 const REPEAT_GAP = 0.6; // seconds of silence between arpeggios
 const PEAK_GAIN = 0.25;
 
-const BURST_LEN = (NOTES.length - 1) * NOTE_GAP + NOTE_LEN;
-const REPEAT_PERIOD = BURST_LEN + REPEAT_GAP;
+function notesFor(soundId: AlertSoundId): number[] {
+  return ALERT_SOUNDS[soundId]?.notes ?? ALERT_SOUNDS[DEFAULT_ALERT_SOUND].notes;
+}
 
 let ctx: AudioContext | null = null;
 let scheduled: OscillatorNode[] = [];
 let scheduledAt = 0; // ctx.currentTime the ring is due at
 let ringStarted = false;
+let activeSoundId: AlertSoundId = DEFAULT_ALERT_SOUND; // last sound scheduleChime was told to use
 
 /**
  * Create/resume the AudioContext. Must be called from inside a user gesture
@@ -65,18 +84,27 @@ function voice(audio: AudioContext, freq: number, start: number) {
   return osc;
 }
 
-/** Schedule the chime `delaySeconds` from now. Replaces any pending chime. */
-export function scheduleChime(delaySeconds: number) {
+/**
+ * Schedule the chime `delaySeconds` from now. Replaces any pending chime.
+ * `soundId` defaults to whichever sound was last scheduled (or `classic` on
+ * a fresh load), so ensureRung's re-ring keeps using the same sound.
+ */
+export function scheduleChime(delaySeconds: number, soundId: AlertSoundId = activeSoundId) {
   cancelChime();
+  activeSoundId = soundId;
   if (!isWeb || !ctx) return;
+
+  const notes = notesFor(soundId);
+  const burstLen = (notes.length - 1) * NOTE_GAP + NOTE_LEN;
+  const repeatPeriod = burstLen + REPEAT_GAP;
 
   const t0 = ctx.currentTime + Math.max(0, delaySeconds);
   scheduledAt = t0;
   ringStarted = false;
 
   for (let repeat = 0; repeat < REPEATS; repeat += 1) {
-    const burstStart = t0 + repeat * REPEAT_PERIOD;
-    NOTES.forEach((freq, i) => {
+    const burstStart = t0 + repeat * repeatPeriod;
+    notes.forEach((freq, i) => {
       scheduled.push(voice(ctx!, freq, burstStart + i * NOTE_GAP));
     });
   }
@@ -84,6 +112,21 @@ export function scheduleChime(delaySeconds: number) {
   // First note finishing is our proof the ring actually happened.
   const first = scheduled[0];
   if (first) first.onended = () => { ringStarted = true; };
+}
+
+/**
+ * Plays `soundId` once, immediately, for a picker preview. Independent of the
+ * pending-chime bookkeeping above (`scheduled`/`cancelChime`), so it can never
+ * clip or replace a chime already scheduled for a running timer.
+ */
+export function previewChime(soundId: AlertSoundId): number {
+  unlockAudio(); // the picker tap is itself a user gesture
+  if (!isWeb || !ctx) return 0;
+
+  const notes = notesFor(soundId);
+  const start = ctx.currentTime + 0.02;
+  notes.forEach((freq, i) => voice(ctx!, freq, start + i * NOTE_GAP));
+  return (notes.length - 1) * NOTE_GAP + NOTE_LEN; // seconds, for a UI "playing" timeout
 }
 
 /** Silence a pending or playing chime. */
