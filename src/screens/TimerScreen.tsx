@@ -4,7 +4,7 @@ import ArrowBackIcon from '../components/ArrowBackIcon';
 import ProgressBar from '../components/ProgressBar';
 import { formatClock } from '../format';
 import { condensedDisplay, pctX, pctY } from '../layout';
-import { cancelChime, ensureRung, scheduleChime, startTitleFlash, stopTitleFlash } from '../state/chime';
+import { cancelChime, ensureRung, scheduleChime, startTitleFlash, stopTitleFlash, type AlertSoundId } from '../state/chime';
 import { useCountdown } from '../state/useCountdown';
 import { releaseWakeLock, requestWakeLock } from '../state/wakeLock';
 import { colors, fonts } from '../theme';
@@ -14,12 +14,13 @@ const BORDER = 0.5;
 
 type Props = {
   presetMinutes: number;
+  soundId: AlertSoundId;
   onBack: () => void;
   onStop: () => void;
   onComplete: (remainingSeconds: number, isFullCompletion: boolean) => void;
 };
 
-export default function TimerScreen({ presetMinutes, onBack, onStop, onComplete }: Props) {
+export default function TimerScreen({ presetMinutes, soundId, onBack, onStop, onComplete }: Props) {
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
 
@@ -36,8 +37,8 @@ export default function TimerScreen({ presetMinutes, onBack, onStop, onComplete 
 
   // Book the tone up front so it fires on time even in a throttled background tab.
   useEffect(() => {
-    scheduleChime(getRemainingMs() / 1000);
-  }, [getRemainingMs]);
+    scheduleChime(getRemainingMs() / 1000, soundId);
+  }, [getRemainingMs, soundId]);
 
   // Held for the screen's whole lifetime — every exit path (back, Task Done, Stop, natural
   // completion) unmounts this screen, so the cleanup here is the single release point.
@@ -49,9 +50,9 @@ export default function TimerScreen({ presetMinutes, onBack, onStop, onComplete 
   const handleAddMinutes = useCallback(
     (minutes: number) => {
       addMinutes(minutes);
-      scheduleChime(getRemainingMs() / 1000);
+      scheduleChime(getRemainingMs() / 1000, soundId);
     },
-    [addMinutes, getRemainingMs],
+    [addMinutes, getRemainingMs, soundId],
   );
 
   // Leaving the timer on purpose — nothing left to ring for.
