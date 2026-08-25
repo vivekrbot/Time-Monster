@@ -33,7 +33,7 @@ export const DEFAULT_ALERT_SOUND: AlertSoundId = 'classic';
 
 const NOTE_GAP = 0.18; // seconds between notes of one arpeggio
 const NOTE_LEN = 0.9; // seconds for a single note to decay to silence
-const REPEATS = 3;
+const REPEATS = 3; // bursts per chained batch — see scheduleBatchFrom
 const REPEAT_GAP = 0.6; // seconds of silence between arpeggios
 const PEAK_GAIN = 0.25;
 
@@ -46,6 +46,7 @@ let scheduled: OscillatorNode[] = [];
 let scheduledAt = 0; // ctx.currentTime the ring is due at
 let ringStarted = false;
 let activeSoundId: AlertSoundId = DEFAULT_ALERT_SOUND; // last sound scheduleChime was told to use
+let looping = false; // cleared by cancelChime() so a chained batch stops rescheduling
 
 /**
  * Create/resume the AudioContext. Must be called from inside a user gesture
@@ -84,8 +85,37 @@ function voice(audio: AudioContext, freq: number, start: number) {
   return osc;
 }
 
+// Oscillator nodes are one-shot, so "loop until stopped" is a chain of finite
+// batches: each batch's last note reschedules the next one from its own
+// onended, and only while `looping` is still true. Every individual note is
+// still pre-scheduled with an absolute AudioContext time via voice(), so
+// playback within a batch keeps the same tab-throttle-proof guarantee as
+// before — only the decision to queue the *next* batch depends on a JS
+// callback, which is a small, self-healing gap rather than the whole timing
+// mechanism. `notes`/`repeatPeriod` are passed in rather than read from a
+// module constant because they now vary per alert sound (SID-18).
+function scheduleBatchFrom(startAt: number, notes: number[], repeatPeriod: number) {
+  let lastNote: OscillatorNode | null = null;
+
+  for (let repeat = 0; repeat < REPEATS; repeat += 1) {
+    const burstStart = startAt + repeat * repeatPeriod;
+    notes.forEach((freq, i) => {
+      const note = voice(ctx!, freq, burstStart + i * NOTE_GAP);
+      scheduled.push(note);
+      lastNote = note;
+    });
+  }
+
+  const batchEnd = startAt + REPEATS * repeatPeriod;
+  if (lastNote) {
+    (lastNote as OscillatorNode).onended = () => {
+      if (looping) scheduleBatchFrom(Math.max(batchEnd, ctx!.currentTime), notes, repeatPeriod);
+    };
+  }
+}
+
 /**
- * Schedule the chime `delaySeconds` from now. Replaces any pending chime.
+ * Schedule the chime `delaySeconds` from now, looping until cancelChime().
  * `soundId` defaults to whichever sound was last scheduled (or `classic` on
  * a fresh load), so ensureRung's re-ring keeps using the same sound.
  */
@@ -101,13 +131,9 @@ export function scheduleChime(delaySeconds: number, soundId: AlertSoundId = acti
   const t0 = ctx.currentTime + Math.max(0, delaySeconds);
   scheduledAt = t0;
   ringStarted = false;
+  looping = true;
 
-  for (let repeat = 0; repeat < REPEATS; repeat += 1) {
-    const burstStart = t0 + repeat * repeatPeriod;
-    notes.forEach((freq, i) => {
-      scheduled.push(voice(ctx!, freq, burstStart + i * NOTE_GAP));
-    });
-  }
+  scheduleBatchFrom(t0, notes, repeatPeriod);
 
   // First note finishing is our proof the ring actually happened.
   const first = scheduled[0];
@@ -129,10 +155,11 @@ export function previewChime(soundId: AlertSoundId): number {
   return (notes.length - 1) * NOTE_GAP + NOTE_LEN; // seconds, for a UI "playing" timeout
 }
 
-/** Silence a pending or playing chime. */
+/** Silence a pending or playing chime, and stop it from rescheduling itself. */
 export function cancelChime() {
+  looping = false;
   for (const osc of scheduled) {
-    osc.onended = null; // stop() would otherwise fire it and set ringStarted
+    osc.onended = null; // stop() would otherwise fire it and reschedule/set ringStarted
     try {
       osc.stop();
     } catch {

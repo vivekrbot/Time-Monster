@@ -5,6 +5,7 @@ import ProgressBar from '../components/ProgressBar';
 import { formatClock } from '../format';
 import { condensedDisplay, pctX, pctY } from '../layout';
 import { cancelChime, ensureRung, scheduleChime, startTitleFlash, stopTitleFlash, type AlertSoundId } from '../state/chime';
+import { showTimerNotification } from '../state/notifications';
 import { useCountdown } from '../state/useCountdown';
 import { releaseWakeLock, requestWakeLock } from '../state/wakeLock';
 import { colors, fonts } from '../theme';
@@ -15,20 +16,22 @@ const BORDER = 0.5;
 type Props = {
   presetMinutes: number;
   soundId: AlertSoundId;
+  notifyEnabled: boolean;
   onBack: () => void;
   onStop: () => void;
   onComplete: (remainingSeconds: number, isFullCompletion: boolean) => void;
 };
 
-export default function TimerScreen({ presetMinutes, soundId, onBack, onStop, onComplete }: Props) {
+export default function TimerScreen({ presetMinutes, soundId, notifyEnabled, onBack, onStop, onComplete }: Props) {
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
 
   const handleAutoComplete = useCallback(() => {
     ensureRung();
     startTitleFlash();
+    if (notifyEnabled) showTimerNotification(presetMinutes);
     onCompleteRef.current(0, true);
-  }, []);
+  }, [notifyEnabled, presetMinutes]);
 
   const { remainingSeconds, progress, addMinutes, getRemainingMs } = useCountdown({
     initialMinutes: presetMinutes,

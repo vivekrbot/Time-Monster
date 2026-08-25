@@ -1,7 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors, fonts } from '../theme';
 
-const ROWS = [[15, 25, 35], [45], [65, 95]];
+const ROWS = [[5, 15, 30], [45], [60, 95]];
 const BORDER = 0.5;
 
 type Props = {

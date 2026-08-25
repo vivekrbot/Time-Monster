@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native';
+import NotifyToggle from '../components/NotifyToggle';
 import OwlIcon from '../components/OwlIcon';
 import PresetGrid from '../components/PresetGrid';
 import SoundPicker from '../components/SoundPicker';
@@ -9,12 +10,13 @@ import { loadSoundPreference, saveSoundPreference } from '../state/soundPreferen
 import { colors, fonts } from '../theme';
 
 type Props = {
-  onStartTimer: (minutes: number, soundId: AlertSoundId) => void;
+  onStartTimer: (minutes: number, soundId: AlertSoundId, notifyEnabled: boolean) => void;
 };
 
 export default function HomeScreen({ onStartTimer }: Props) {
   const [selected, setSelected] = useState<number | null>(null);
   const [soundId, setSoundId] = useState<AlertSoundId>(loadSoundPreference);
+  const [notifyEnabled, setNotifyEnabled] = useState(false);
 
   const handleSoundSelect = (id: AlertSoundId) => {
     setSoundId(id);
@@ -36,10 +38,11 @@ export default function HomeScreen({ onStartTimer }: Props) {
         <View style={styles.mainButton}>
           <PresetGrid selected={selected} onSelect={setSelected} />
           <SoundPicker selected={soundId} onSelect={handleSoundSelect} />
+          <NotifyToggle enabled={notifyEnabled} onChange={setNotifyEnabled} />
           <Pressable
             style={[styles.setTimer, { opacity: selected === null ? 0.4 : 1 }]}
             disabled={selected === null}
-            onPress={() => selected !== null && onStartTimer(selected, soundId)}
+            onPress={() => selected !== null && onStartTimer(selected, soundId, notifyEnabled)}
           >
             <Text style={styles.setTimerLabel}>Set Timer</Text>
           </Pressable>

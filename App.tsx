@@ -10,7 +10,7 @@ import { StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 
 import HomeScreen from './src/screens/HomeScreen';
-import { DEFAULT_ALERT_SOUND, unlockAudio, type AlertSoundId } from './src/state/chime';
+import { cancelChime, DEFAULT_ALERT_SOUND, stopTitleFlash, unlockAudio, type AlertSoundId } from './src/state/chime';
 import SplashScreen from './src/screens/SplashScreen';
 import TaskDoneScreen from './src/screens/TaskDoneScreen';
 import TimerScreen from './src/screens/TimerScreen';
@@ -35,6 +35,7 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>('splash');
   const [presetMinutes, setPresetMinutes] = useState(15);
   const [soundId, setSoundId] = useState<AlertSoundId>(DEFAULT_ALERT_SOUND);
+  const [notifyEnabled, setNotifyEnabled] = useState(false);
   const [doneState, setDoneState] = useState<DoneState | null>(null);
 
   if (!fontsLoaded) {
@@ -49,10 +50,11 @@ export default function App() {
 
       {screen === 'home' && (
         <HomeScreen
-          onStartTimer={(minutes, chosenSoundId) => {
+          onStartTimer={(minutes, chosenSoundId, chosenNotifyEnabled) => {
             unlockAudio(); // must happen inside the tap for autoplay policy
             setPresetMinutes(minutes);
             setSoundId(chosenSoundId);
+            setNotifyEnabled(chosenNotifyEnabled);
             setScreen('timer');
           }}
         />
@@ -62,6 +64,7 @@ export default function App() {
         <TimerScreen
           presetMinutes={presetMinutes}
           soundId={soundId}
+          notifyEnabled={notifyEnabled}
           onBack={() => setScreen('home')}
           onStop={() => setScreen('home')}
           onComplete={(remainingSeconds, isFullCompletion) => {
@@ -76,8 +79,19 @@ export default function App() {
           presetMinutes={doneState.presetMinutes}
           remainingSeconds={doneState.remainingSeconds}
           isFullCompletion={doneState.isFullCompletion}
-          onBack={() => setScreen('home')}
-          onClose={() => setScreen('home')}
+          onBack={() => {
+            // A chime left over from natural completion (or its endless loop,
+            // per SID-22) is never cancelled just by leaving this screen — do
+            // it explicitly, the same way TimerScreen's abandon() does.
+            cancelChime();
+            stopTitleFlash();
+            setScreen('home');
+          }}
+          onClose={() => {
+            cancelChime();
+            stopTitleFlash();
+            setScreen('home');
+          }}
           onRepeat={() => {
             unlockAudio();
             setPresetMinutes(doneState.presetMinutes);
