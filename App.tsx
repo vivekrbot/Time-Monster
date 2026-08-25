@@ -35,6 +35,7 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>('splash');
   const [presetMinutes, setPresetMinutes] = useState(15);
   const [soundId, setSoundId] = useState<AlertSoundId>(DEFAULT_ALERT_SOUND);
+  const [notifyEnabled, setNotifyEnabled] = useState(false);
   const [doneState, setDoneState] = useState<DoneState | null>(null);
 
   if (!fontsLoaded) {
@@ -49,10 +50,11 @@ export default function App() {
 
       {screen === 'home' && (
         <HomeScreen
-          onStartTimer={(minutes, chosenSoundId) => {
+          onStartTimer={(minutes, chosenSoundId, chosenNotifyEnabled) => {
             unlockAudio(); // must happen inside the tap for autoplay policy
             setPresetMinutes(minutes);
             setSoundId(chosenSoundId);
+            setNotifyEnabled(chosenNotifyEnabled);
             setScreen('timer');
           }}
         />
@@ -62,6 +64,7 @@ export default function App() {
         <TimerScreen
           presetMinutes={presetMinutes}
           soundId={soundId}
+          notifyEnabled={notifyEnabled}
           onBack={() => setScreen('home')}
           onStop={() => setScreen('home')}
           onComplete={(remainingSeconds, isFullCompletion) => {
