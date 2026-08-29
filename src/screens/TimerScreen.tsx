@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native';
 import ArrowBackIcon from '../components/ArrowBackIcon';
+import Forest from '../components/Forest';
 import ProgressBar from '../components/ProgressBar';
 import { formatClock } from '../format';
 import { condensedDisplay, pctX, pctY } from '../layout';
@@ -18,25 +19,39 @@ type Props = {
   soundId: AlertSoundId;
   notifyEnabled: boolean;
   onBack: () => void;
-  onStop: () => void;
-  onComplete: (remainingSeconds: number, isFullCompletion: boolean) => void;
+  onStop: (remainingSeconds: number, elapsedSeconds: number, totalSeconds: number) => void;
+  onComplete: (remainingSeconds: number, isFullCompletion: boolean, elapsedSeconds: number, totalSeconds: number) => void;
 };
 
 export default function TimerScreen({ presetMinutes, soundId, notifyEnabled, onBack, onStop, onComplete }: Props) {
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
 
+  // handleAutoComplete is handed to useCountdown below as its onComplete callback, so it has
+  // to exist before useCountdown returns totalSeconds — it reads it from this ref instead,
+  // which every render refreshes to the latest value just after the hook call.
+  const snapshotRef = useRef({ totalSeconds: presetMinutes * 60 });
+
   const handleAutoComplete = useCallback(() => {
     ensureRung();
     startTitleFlash();
     if (notifyEnabled) showTimerNotification(presetMinutes);
-    onCompleteRef.current(0, true);
+    // Natural completion means the session is by definition fully elapsed — use totalSeconds
+    // for both arguments rather than the ref's elapsedSeconds, which is always exactly one
+    // tick stale here (handleAutoComplete fires synchronously inside the same tick that just
+    // computed the final elapsedSeconds, before the render that would refresh the ref). Since
+    // every totalSeconds is an exact multiple of 300s, that one-tick lag always undercounts
+    // the last tree by exactly one — this was SID-25's Pass A Blocking finding.
+    const { totalSeconds: total } = snapshotRef.current;
+    onCompleteRef.current(0, true, total, total);
   }, [notifyEnabled, presetMinutes]);
 
-  const { remainingSeconds, progress, addMinutes, getRemainingMs } = useCountdown({
+  const { remainingSeconds, progress, totalSeconds, elapsedSeconds, addMinutes, getRemainingMs } = useCountdown({
     initialMinutes: presetMinutes,
     onComplete: handleAutoComplete,
   });
+
+  snapshotRef.current = { totalSeconds };
 
   // Book the tone up front so it fires on time even in a throttled background tab.
   useEffect(() => {
@@ -83,6 +98,10 @@ export default function TimerScreen({ presetMinutes, soundId, notifyEnabled, onB
 
         <Text style={styles.focusLabel}>{presetMinutes} min focus Timer</Text>
 
+        <View style={styles.forestWrap}>
+          <Forest elapsedSeconds={elapsedSeconds} totalSeconds={totalSeconds} />
+        </View>
+
         <View style={styles.mainButton}>
           <View style={styles.addRow}>
             {ADD_TIME_OPTIONS.map((minutes) => (
@@ -95,11 +114,16 @@ export default function TimerScreen({ presetMinutes, soundId, notifyEnabled, onB
           <View style={styles.actionRow}>
             <Pressable
               style={styles.taskDoneCell}
-              onPress={() => abandon(() => onComplete(remainingSeconds, remainingSeconds <= 0))}
+              onPress={() =>
+                abandon(() => onComplete(remainingSeconds, remainingSeconds <= 0, elapsedSeconds, totalSeconds))
+              }
             >
               <Text style={styles.taskDoneLabel}>Task Done !</Text>
             </Pressable>
-            <Pressable style={styles.stopCell} onPress={() => abandon(onStop)}>
+            <Pressable
+              style={styles.stopCell}
+              onPress={() => abandon(() => onStop(remainingSeconds, elapsedSeconds, totalSeconds))}
+            >
               <Text style={styles.stopLabel}>Stop !?</Text>
             </Pressable>
           </View>
@@ -163,6 +187,13 @@ const styles = StyleSheet.create({
     lineHeight: 23,
     textTransform: 'uppercase',
     color: colors.ink,
+  },
+  forestWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: pctY(478),
+    bottom: 128,
   },
   mainButton: {
     position: 'absolute',

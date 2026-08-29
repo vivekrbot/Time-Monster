@@ -22,6 +22,9 @@ type DoneState = {
   presetMinutes: number;
   remainingSeconds: number;
   isFullCompletion: boolean;
+  elapsedSeconds: number;
+  totalSeconds: number;
+  wasStopped: boolean;
 };
 
 export default function App() {
@@ -66,9 +69,28 @@ export default function App() {
           soundId={soundId}
           notifyEnabled={notifyEnabled}
           onBack={() => setScreen('home')}
-          onStop={() => setScreen('home')}
-          onComplete={(remainingSeconds, isFullCompletion) => {
-            setDoneState({ presetMinutes, remainingSeconds, isFullCompletion });
+          onStop={(remainingSeconds, elapsedSeconds, totalSeconds) => {
+            // Stop now lands on Task Done too, not straight Home — the withered tree is the
+            // whole point of giving up early having a visible cost (SID-25).
+            setDoneState({
+              presetMinutes,
+              remainingSeconds,
+              isFullCompletion: false,
+              elapsedSeconds,
+              totalSeconds,
+              wasStopped: true,
+            });
+            setScreen('done');
+          }}
+          onComplete={(remainingSeconds, isFullCompletion, elapsedSeconds, totalSeconds) => {
+            setDoneState({
+              presetMinutes,
+              remainingSeconds,
+              isFullCompletion,
+              elapsedSeconds,
+              totalSeconds,
+              wasStopped: false,
+            });
             setScreen('done');
           }}
         />
@@ -79,6 +101,9 @@ export default function App() {
           presetMinutes={doneState.presetMinutes}
           remainingSeconds={doneState.remainingSeconds}
           isFullCompletion={doneState.isFullCompletion}
+          elapsedSeconds={doneState.elapsedSeconds}
+          totalSeconds={doneState.totalSeconds}
+          wasStopped={doneState.wasStopped}
           onBack={() => {
             // A chime left over from natural completion (or its endless loop,
             // per SID-22) is never cancelled just by leaving this screen — do
