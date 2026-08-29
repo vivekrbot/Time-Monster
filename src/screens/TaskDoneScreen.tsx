@@ -1,8 +1,10 @@
 import { Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native';
 import AlarmCheckIcon from '../components/AlarmCheckIcon';
 import ArrowBackIcon from '../components/ArrowBackIcon';
+import { RecapForest } from '../components/Forest';
 import { formatClock } from '../format';
 import { condensedDisplay, pctX, pctY } from '../layout';
+import { treesForRecap } from '../state/forest';
 import { colors, fonts } from '../theme';
 
 const BORDER = 0.5;
@@ -11,6 +13,9 @@ type Props = {
   presetMinutes: number;
   remainingSeconds: number;
   isFullCompletion: boolean;
+  elapsedSeconds: number;
+  totalSeconds: number;
+  wasStopped: boolean;
   onBack: () => void;
   onRepeat: () => void;
   onClose: () => void;
@@ -20,10 +25,14 @@ export default function TaskDoneScreen({
   presetMinutes,
   remainingSeconds,
   isFullCompletion,
+  elapsedSeconds,
+  totalSeconds,
+  wasStopped,
   onBack,
   onRepeat,
   onClose,
 }: Props) {
+  const trees = treesForRecap(elapsedSeconds, totalSeconds, wasStopped);
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.canvas}>
@@ -46,6 +55,10 @@ export default function TaskDoneScreen({
             ? 'Full session complete — monster tamed! 🎉'
             : 'Nice work — you still had time left on the clock.'}
         </Text>
+
+        <View style={styles.forestWrap}>
+          <RecapForest trees={trees} />
+        </View>
 
         <View style={styles.mainButton}>
           <View style={styles.actionRow}>
@@ -120,6 +133,13 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     letterSpacing: 0.14,
     color: colors.gray,
+  },
+  forestWrap: {
+    position: 'absolute',
+    left: pctX(24),
+    top: pctY(465),
+    width: pctX(345),
+    bottom: 64,
   },
   mainButton: {
     position: 'absolute',

@@ -11,6 +11,10 @@ export function useCountdown({ initialMinutes, onComplete }: UseCountdownArgs) {
   const [remainingSeconds, setRemainingSeconds] = useState(initialSeconds);
 
   const endTimestampRef = useRef(Date.now() + initialSeconds * 1000);
+  // Fixed at mount, never touched by addMinutes — the one thing elapsedSeconds is allowed
+  // to depend on, so extending the timer can never move a tree that's already grown.
+  const startTimestampRef = useRef(Date.now());
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const completedRef = useRef(false);
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
@@ -19,6 +23,7 @@ export function useCountdown({ initialMinutes, onComplete }: UseCountdownArgs) {
     const tick = () => {
       const secondsLeft = Math.max(0, Math.round((endTimestampRef.current - Date.now()) / 1000));
       setRemainingSeconds(secondsLeft);
+      setElapsedSeconds(Math.max(0, Math.floor((Date.now() - startTimestampRef.current) / 1000)));
       if (secondsLeft <= 0 && !completedRef.current) {
         completedRef.current = true;
         onCompleteRef.current();
@@ -41,5 +46,5 @@ export function useCountdown({ initialMinutes, onComplete }: UseCountdownArgs) {
 
   const progress = totalSeconds > 0 ? 1 - remainingSeconds / totalSeconds : 0;
 
-  return { remainingSeconds, totalSeconds, progress, addMinutes, getRemainingMs };
+  return { remainingSeconds, totalSeconds, progress, elapsedSeconds, addMinutes, getRemainingMs };
 }
