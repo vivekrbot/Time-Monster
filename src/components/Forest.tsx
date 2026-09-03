@@ -1,12 +1,16 @@
+import { useEffect, useRef, useState } from 'react';
 import Svg, { Circle, Ellipse, G, Path } from 'react-native-svg';
 import {
-  slotForIndex,
+  lockedTreeCount,
+  plotForCount,
   treesForElapsed,
   type GrowthStage,
   type PlantedTree,
+  type Plot,
   type RecapTree,
   type Species,
 } from '../state/forest';
+import { prefersReducedMotion } from '../motion';
 import { colors } from '../theme';
 
 type Props = {
@@ -14,40 +18,58 @@ type Props = {
   totalSeconds: number;
 };
 
-// Layout is a fixed-column grid, not the design source's reflowing sqrt(count) packing —
-// see SID-24's Dev Log for why. Columns and spacing are sized for this 393x240 band; both
-// axes deliberately overlap (COL_STEP < TILE_W, ROW_STEP < SPEC_H) so tiles read as a
-// packed plot with rows layered by depth, not a bare grid.
+// Isometric plot geometry, straight from the design source. A specimen box is 64x104 with
+// its tile's top-centre at (32,72) and the canopy growing up into y=0. Tiles interlock on
+// both axes: a step across costs half a tile (DX), and a row further back costs only 16px
+// of height (DY) instead of a full tile — which is what lets nineteen trees fit the band.
+// The empty band the Timer screen already has, between the focus label and the buttons.
 const BAND_W = 393;
 const BAND_H = 240;
-const MARGIN = 8;
+
 const TILE_W = 64;
 const SPEC_H = 104;
-const COL_STEP = 48;
-const ROW_STEP = 64;
+const DX = 32;
+const DY = 16;
+// Trimmed to buy tile size: the 19-tree plot is height-bound in the timer band, so every
+// pixel of vertical padding comes straight off how large a tile can be drawn.
+const PAD = 6;
 
-// Forces an odd count, decrementing by one if the natural fit is even. A single tree
-// needs one column that sits exactly at the row's centre — an even count has no such
-// column, so the lone-tree case would always land half a step off-centre otherwise.
-function oddColumnCount(naturalFit: number): number {
-  const atLeastOne = Math.max(1, naturalFit);
-  return atLeastOne % 2 === 0 ? atLeastOne - 1 : atLeastOne;
+// Drawn tile widths, largest first; the art itself is authored in a 64px box, so 72 draws it
+// at 112.5%. The first tier is the preferred size, and it is chosen as the largest one where
+// the 19-tree (95 minute) plot still clears the shorter of the two bands — so the tile stays
+// identical across every preset and only steps for forests beyond the longest one.
+//
+// Size steps in discrete tiers rather than sliding continuously. `+15` is unbounded, so a
+// forest can outgrow its band; when it does, "the forest got deep" should read as a rare,
+// deliberate event, not a reshuffle that nudges every tile on every new tree.
+const TILE_TIERS = [72, 64, 48, 36, 27];
+
+type PlotLayout = { scale: number; offsetX: number; offsetY: number };
+
+// Fits the plot to a band, centred. Trees stay at the preferred size until the plot genuinely
+// outgrows the band — for every current preset (up to 19 trees) the first tier wins.
+function layoutPlot(plot: Plot, bandW: number, bandH: number): PlotLayout {
+  const plotW = (plot.maxAcross - plot.minAcross) * DX + TILE_W;
+  const plotH = (plot.maxDepth - plot.minDepth) * DY + SPEC_H;
+
+  const fit = Math.min(TILE_TIERS[0] / TILE_W, (bandW - PAD * 2) / plotW, (bandH - PAD * 2) / plotH);
+  const tier = TILE_TIERS.find((width) => width / TILE_W <= fit);
+  // Below the smallest tier, fall back to an exact fit — a forest that deep is far past
+  // any preset, and overflowing the band would be worse than one more size.
+  const scale = tier !== undefined ? tier / TILE_W : fit;
+
+  return {
+    scale,
+    offsetX: (bandW - plotW * scale) / 2,
+    offsetY: (bandH - plotH * scale) / 2,
+  };
 }
 
-const COLS = oddColumnCount(Math.floor((BAND_W - MARGIN * 2 - (TILE_W - COL_STEP)) / COL_STEP));
-// Centres the whole column block horizontally in the band — combined with slotForIndex's
-// centre-outward fill order and COLS being forced odd, the first tree planted always
-// lands at the band's true horizontal centre, including the lone-tree case.
-const GRID_LEFT = (BAND_W - ((COLS - 1) * COL_STEP + TILE_W)) / 2;
-// Vertical centre of the band — row 0 sits here, positive rows (farther/behind) go up,
-// negative rows (nearer/in front) go down. See rowOffsetForRing in forest.ts for how a
-// tree's ring maps to a signed row.
-const CENTER_Y = BAND_H / 2;
-
-function slotOrigin(col: number, row: number): { x: number; y: number } {
+function slotOrigin(plot: Plot, index: number): { x: number; y: number } {
+  const slot = plot.slots[index];
   return {
-    x: GRID_LEFT + col * COL_STEP,
-    y: CENTER_Y - SPEC_H / 2 - row * ROW_STEP,
+    x: (slot.across - plot.minAcross) * DX,
+    y: (slot.depth - plot.minDepth) * DY,
   };
 }
 
@@ -216,15 +238,187 @@ function SpeciesArt({ species }: { species: Species }) {
   }
 }
 
-function Specimen({ tree, x, y }: { tree: PlantedTree; x: number; y: number }) {
+// --- Lock-in pop -----------------------------------------------------------
+// A tree reaching its full five minutes is the one real achievement in a session, and it
+// used to happen silently — the art just swapped. This marks the moment and nothing else:
+// it is over in under half a second, so unlike an ambient effect it never competes with
+// the timer for attention.
+
+const POP_MS = 420;
+const POP_AMPLITUDE = 0.12;
+// The trunk root, in specimen-local coordinates — the point where the tree meets its tile.
+// Scaling about here reads as the tree pushing up out of the ground; scaling about the box
+// centre would make it slide instead.
+const POP_PIVOT_X = 32;
+const POP_PIVOT_Y = 71;
+
+// A single front-loaded hump: snaps up to the overshoot in roughly the first third, then
+// eases back down. Starts and ends at exactly 1, so a finished pop leaves nothing to reset.
+function popScaleAt(t: number): number {
+  return 1 + POP_AMPLITUDE * Math.sin(Math.PI * Math.pow(t, 0.6));
+}
+
+// Runs a one-shot pop whenever `active` goes false -> true. State lives here rather than in
+// Forest so a running pop re-renders only its own specimen — the other eighteen trees, and
+// the plot layout, are untouched while it plays.
+function usePopScale(active: boolean): number {
+  const [scale, setScale] = useState(1);
+  // Seeded with whatever `active` is at mount, so arriving on a screen where a tree is
+  // already the most recently locked one does not replay a pop the user never earned.
+  const wasActive = useRef(active);
+
+  useEffect(() => {
+    if (active === wasActive.current) return;
+    wasActive.current = active;
+    if (!active || prefersReducedMotion()) return;
+
+    let frame = 0;
+    const startedAt = Date.now();
+    const step = () => {
+      const t = Math.min(1, (Date.now() - startedAt) / POP_MS);
+      setScale(t < 1 ? popScaleAt(t) : 1);
+      if (t < 1) frame = requestAnimationFrame(step);
+    };
+    frame = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(frame);
+  }, [active]);
+
+  return scale;
+}
+
+// --- Wind ------------------------------------------------------------------
+// Runs on both screens, at different strengths — see the two profiles below. Driven from JS
+// rather than CSS keyframes: react-native-svg's web layer does forward
+// `style`, but only through react-native-web's resolver, and a raw `animation` shorthand
+// surviving that is not something worth betting the feature on. The cost is kept down by
+// capping the loop well below display rate — at a 4.5s cycle nothing is gained above 30fps —
+// and by deriving every tree's angle from one shared phase value, so a frame re-renders the
+// specimens and nothing else.
+
+// Two profiles, because the two screens are doing different jobs. Task Done is a reward, so
+// the wind there runs at full strength. The Timer screen has to stay liveable behind
+// forty-five minutes of focus.
+//
+// The calming lever there is the period, not the amplitude: what pulls the eye to peripheral
+// motion is its speed, not how far it travels, and a sway shrunk below about two pixels of
+// crown movement simply stops being visible at all. So the timer keeps most of the amplitude
+// and runs a slightly longer cycle than the reward screen.
+//
+// Both periods sit in the 1-3s band a real canopy sways at. They were originally set far
+// slower, on the theory that slower is less distracting — which is true, but past a couple of
+// seconds per cycle it stops reading as wind and starts reading as floating. Tested in use,
+// and corrected.
+//
+// gustLagMs is held at roughly 4% of the period on both profiles. It is the lag that makes
+// the sway travel, so it has to scale with the cycle: left as a fixed millisecond value it
+// would become a large fraction of a shorter period and push opposite ends of the plot into
+// antiphase, which reads as chaos rather than a gust.
+type WindProfile = {
+  periodMs: number;
+  // Lag per column-step, which turns nineteen independent wobbles into one gust crossing the
+  // plot. This is the whole difference between "a landscape" and "a screensaver".
+  gustLagMs: number;
+  amplitudeScale: number;
+  // Nothing is gained from drawing a multi-second sway at display rate.
+  fps: number;
+};
+
+const RECAP_WIND: WindProfile = { periodMs: 2400, gustLagMs: 95, amplitudeScale: 1, fps: 30 };
+const TIMER_WIND: WindProfile = { periodMs: 3000, gustLagMs: 120, amplitudeScale: 0.8, fps: 30 };
+
+// Amplitude in degrees, per species. Not uniform, for two reasons: conifers genuinely barely
+// move while poplars shimmer, and the design source is explicit that species are told apart
+// by outline at roughly twelve pixels of canopy — so equal sway would blur the one cue that
+// distinguishes them. The stiffest silhouettes move least.
+const SWAY_DEGREES: Record<Species, number> = {
+  fir: 0.35,
+  oak: 1,
+  broadleaf: 1.5,
+  umbrella: 2,
+  birch: 2.6,
+  poplar: 3,
+};
+
+// Two sines at a 1:2.3 frequency ratio. A single sine reads as mechanical because the whole
+// plot returns to rest together; the offset second wave breaks that up. The pattern does
+// still repeat — 2.3 is 23/10, so the true period is ten cycles, 45 seconds — which is far
+// longer than anyone spends on a results screen. Shift the 2.3 to lengthen it if that ever
+// stops being true.
+function swayAngle(elapsedMs: number, amplitudeDeg: number, lagMs: number, periodMs: number): number {
+  const theta = ((elapsedMs - lagMs) / periodMs) * Math.PI * 2;
+  return amplitudeDeg * (0.7 * Math.sin(theta) + 0.3 * Math.sin(2.3 * theta + 1.1));
+}
+
+// Shared by both screens: a tree's angle from the wind clock, its species and its column.
+function swayFor(plot: Plot, index: number, species: Species, wind: WindProfile, windMs: number): number {
+  const amplitude = SWAY_DEGREES[species] * wind.amplitudeScale;
+  const lagMs = (plot.slots[index].across - plot.minAcross) * wind.gustLagMs;
+  return Number(swayAngle(windMs, amplitude, lagMs, wind.periodMs).toFixed(3));
+}
+
+// One clock for the whole forest. Returns elapsed milliseconds, or null when there is nothing
+// to sway or the viewer has asked for reduced motion — in which case no loop starts. null,
+// not 0: swayAngle(0, ...) is a per-column phase offset, not necessarily zero (a tree away
+// from the lag origin evaluates to a real nonzero angle at t=0) — freezing at 0 would leave
+// off-center trees permanently tilted instead of upright. Callers must treat null as "angle 0",
+// never pass it into swayAngle.
+function useWindClock(enabled: boolean, fps: number): number | null {
+  const [elapsedMs, setElapsedMs] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!enabled || prefersReducedMotion()) {
+      setElapsedMs(null);
+      return;
+    }
+
+    let frame = 0;
+    let lastPaint = 0;
+    const startedAt = Date.now();
+    const step = () => {
+      const now = Date.now();
+      if (now - lastPaint >= 1000 / fps) {
+        lastPaint = now;
+        setElapsedMs(now - startedAt);
+      }
+      frame = requestAnimationFrame(step);
+    };
+    frame = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(frame);
+  }, [enabled, fps]);
+
+  return elapsedMs;
+}
+
+function Specimen({
+  tree,
+  x,
+  y,
+  popping,
+  angle,
+}: {
+  tree: PlantedTree;
+  x: number;
+  y: number;
+  popping: boolean;
+  angle: number;
+}) {
+  const scale = usePopScale(popping);
+
   return (
     <G transform={`translate(${x} ${y})`}>
+      {/* The tile is ground — it stays put while the tree growing out of it pops and sways. */}
       <Tile />
-      {tree.stage === 'full' && tree.species ? (
-        <SpeciesArt species={tree.species} />
-      ) : (
-        <GrowthArt stage={tree.stage as Exclude<GrowthStage, 'full'>} />
-      )}
+      {/* Pop and sway share one pivot, so a tree that locks mid-gust bends and swells about
+          the same trunk root instead of fighting itself. */}
+      <G
+        transform={`translate(${POP_PIVOT_X} ${POP_PIVOT_Y}) rotate(${angle}) scale(${scale}) translate(${-POP_PIVOT_X} ${-POP_PIVOT_Y})`}
+      >
+        {tree.stage === 'full' && tree.species ? (
+          <SpeciesArt species={tree.species} />
+        ) : (
+          <GrowthArt stage={tree.stage as Exclude<GrowthStage, 'full'>} />
+        )}
+      </G>
     </G>
   );
 }
@@ -239,22 +433,21 @@ const STAGE_LABEL: Record<GrowthStage, string> = {
 
 export default function Forest({ elapsedSeconds, totalSeconds }: Props) {
   const trees = treesForElapsed(elapsedSeconds, totalSeconds);
-  const lockedCount = trees.filter((t) => t.stage === 'full').length;
+  // Not a count of 'full'-stage trees — the last growth stage shares that name. See
+  // lockedTreeCount for why that distinction matters here.
+  const lockedCount = lockedTreeCount(elapsedSeconds, totalSeconds);
   const growing = trees.find((t) => t.index === lockedCount);
 
   const label = growing
     ? `${lockedCount} tree${lockedCount === 1 ? '' : 's'} grown, one more growing as ${STAGE_LABEL[growing.stage]}`
     : `${lockedCount} tree${lockedCount === 1 ? '' : 's'} grown`;
 
-  // Back-to-front paint order: farther rows (positive, smaller y) first, nearer rows
-  // (negative, larger y) last, so a nearer tile's base can overlap a farther tile's base
-  // without ever covering its canopy — the canopy sits in the upper part of each tile's
-  // box, above the overlap band.
-  const painted = [...trees].sort((a, b) => {
-    const rowA = slotForIndex(a.index, COLS).row;
-    const rowB = slotForIndex(b.index, COLS).row;
-    return rowB - rowA; // descending: most positive (farthest) first, most negative (nearest) last
-  });
+  const plot = plotForCount(trees.length);
+  const { scale, offsetX, offsetY } = layoutPlot(plot, BAND_W, BAND_H);
+
+  // Nothing sways until the first tree is actually earned, so a session's opening five
+  // minutes stay completely still.
+  const windMs = useWindClock(lockedCount > 0, TIMER_WIND.fps);
 
   return (
     <Svg
@@ -264,44 +457,50 @@ export default function Forest({ elapsedSeconds, totalSeconds }: Props) {
       preserveAspectRatio="xMidYMid meet"
       accessibilityLabel={label}
     >
-      {painted.map((tree) => {
-        const slot = slotForIndex(tree.index, COLS);
-        const origin = slotOrigin(slot.col, slot.row);
-        return <Specimen key={tree.index} tree={tree} x={origin.x} y={origin.y} />;
-      })}
+      {/* Tree index order is already the plot's painter's order — farthest first, the one
+          still growing last and nearest — so nothing needs re-sorting before it is drawn. */}
+      <G transform={`translate(${offsetX} ${offsetY}) scale(${scale})`}>
+        {trees.map((tree) => {
+          const origin = slotOrigin(plot, tree.index);
+          // Locked trees sway; the one still growing stays still, which keeps the eye on the
+          // difference between earned and in-progress. Gated on lockedCount rather than on
+          // stage — a tree in its final growth minute already looks full but is not yet safe
+          // from Stop, and must not behave as though it were.
+          const locked = tree.index < lockedCount;
+          const angle =
+            locked && tree.species && windMs !== null
+              ? swayFor(plot, tree.index, tree.species, TIMER_WIND, windMs)
+              : 0;
+          return (
+            <Specimen
+              key={tree.index}
+              tree={tree}
+              x={origin.x}
+              y={origin.y}
+              // Only the most recently locked tree pops, and only as it locks.
+              popping={tree.index === lockedCount - 1}
+              angle={angle}
+            />
+          );
+        })}
+      </G>
     </Svg>
   );
 }
 
-// --- Task Done recap: same specimen art and slot math, a different (taller, narrower) band. ---
-// A separate set of layout constants rather than parameterizing Forest() above — SID-24's
-// layout already passed review; not worth the regression risk to generalize it for reuse here.
+// --- Task Done recap: same specimen art and plot math, a different (taller, narrower) band. ---
 const RECAP_BAND_W = 345;
 const RECAP_BAND_H = 300;
-const RECAP_MARGIN = 8;
-const RECAP_COL_STEP = 48;
-const RECAP_ROW_STEP = 64;
-const RECAP_COLS = oddColumnCount(
-  Math.floor((RECAP_BAND_W - RECAP_MARGIN * 2 - (TILE_W - RECAP_COL_STEP)) / RECAP_COL_STEP),
-);
-// The natural fit here is even (6); forced down to 5 by oddColumnCount so the lone-tree
-// case (e.g. a session stopped almost immediately) lands exactly at true centre instead
-// of ~24px off. Trade-off: max trees-per-row before wrapping drops from 6 to 5.
-const RECAP_GRID_LEFT = (RECAP_BAND_W - ((RECAP_COLS - 1) * RECAP_COL_STEP + TILE_W)) / 2;
-const RECAP_CENTER_Y = RECAP_BAND_H / 2;
 
-function recapSlotOrigin(col: number, row: number): { x: number; y: number } {
-  return {
-    x: RECAP_GRID_LEFT + col * RECAP_COL_STEP,
-    y: RECAP_CENTER_Y - SPEC_H / 2 - row * RECAP_ROW_STEP,
-  };
-}
-
-function RecapSpecimen({ tree, x, y }: { tree: RecapTree; x: number; y: number }) {
+function RecapSpecimen({ tree, x, y, angle }: { tree: RecapTree; x: number; y: number; angle: number }) {
   return (
     <G transform={`translate(${x} ${y})`}>
+      {/* Ground never moves — only what grows out of it. Same pivot as the lock-in pop, so a
+          tree bends from its trunk root rather than swinging about the middle of its box. */}
       {tree.stage === 'withered' ? <DryTile /> : <Tile />}
-      {tree.stage === 'full' && tree.species ? <SpeciesArt species={tree.species} /> : <WitheredArt />}
+      <G transform={`translate(${POP_PIVOT_X} ${POP_PIVOT_Y}) rotate(${angle}) translate(${-POP_PIVOT_X} ${-POP_PIVOT_Y})`}>
+        {tree.stage === 'full' && tree.species ? <SpeciesArt species={tree.species} /> : <WitheredArt />}
+      </G>
     </G>
   );
 }
@@ -316,12 +515,14 @@ export function RecapForest({ trees }: { trees: RecapTree[] }) {
         ? 'one tree withered'
         : `${fullCount} tree${fullCount === 1 ? '' : 's'} grown`;
 
-  // Same back-to-front reasoning as Forest() above, over the recap's own column count.
-  const painted = [...trees].sort((a, b) => {
-    const rowA = slotForIndex(a.index, RECAP_COLS).row;
-    const rowB = slotForIndex(b.index, RECAP_COLS).row;
-    return rowB - rowA; // descending: most positive (farthest) first, most negative (nearest) last
-  });
+  const plot = plotForCount(trees.length);
+  const { scale, offsetX, offsetY } = layoutPlot(plot, RECAP_BAND_W, RECAP_BAND_H);
+
+  // A forest of nothing but a withered tree has no reason to run a loop at all.
+  const windMs = useWindClock(
+    trees.some((t) => t.stage === 'full' && t.species !== null),
+    RECAP_WIND.fps,
+  );
 
   return (
     <Svg
@@ -331,11 +532,28 @@ export function RecapForest({ trees }: { trees: RecapTree[] }) {
       preserveAspectRatio="xMidYMid meet"
       accessibilityLabel={label}
     >
-      {painted.map((tree) => {
-        const slot = slotForIndex(tree.index, RECAP_COLS);
-        const origin = recapSlotOrigin(slot.col, slot.row);
-        return <RecapSpecimen key={tree.index} tree={tree} x={origin.x} y={origin.y} />;
-      })}
+      {/* Index order is painter's order here too, which puts a stopped session's withered
+          tree in the nearest slot — the last thing planted, and the last thing drawn. */}
+      <G transform={`translate(${offsetX} ${offsetY}) scale(${scale})`}>
+        {trees.map((tree) => {
+          const origin = slotOrigin(plot, tree.index);
+          // Dead wood does not move. The whole forest breathing around one rigid grey tree
+          // says what a stopped session cost far better than the grey palette does alone.
+          const angle =
+            tree.stage === 'full' && tree.species && windMs !== null
+              ? swayFor(plot, tree.index, tree.species, RECAP_WIND, windMs)
+              : 0;
+          return (
+            <RecapSpecimen
+              key={tree.index}
+              tree={tree}
+              x={origin.x}
+              y={origin.y}
+              angle={angle}
+            />
+          );
+        })}
+      </G>
     </Svg>
   );
 }
