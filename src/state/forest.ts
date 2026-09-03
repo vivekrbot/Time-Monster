@@ -26,6 +26,15 @@ function stageForOffset(offsetSeconds: number): GrowthStage {
   return STAGES[i];
 }
 
+// How many trees are permanently earned. The single definition of "locked" — treesForElapsed
+// and treesForRecap both count the same way, and callers must use this rather than counting
+// trees whose stage is 'full': the fifth *growth* stage is also called 'full', so a tree that
+// still has a minute to run already looks finished. Counting those would claim a tree that
+// Stop can still wither.
+export function lockedTreeCount(elapsedSeconds: number, totalSeconds: number): number {
+  return Math.floor(Math.max(0, Math.min(elapsedSeconds, totalSeconds)) / TREE_SECONDS);
+}
+
 // Every tree that should currently be visible: all trees that have reached a full
 // 5-minute block (locked, permanent, species assigned), plus the one still growing —
 // unless elapsed has caught up with the session total, in which case nothing is left
@@ -74,44 +83,80 @@ export function treesForRecap(elapsedSeconds: number, totalSeconds: number, wasS
   return trees;
 }
 
-export type TreeSlot = { col: number; row: number };
+export type PlotSlot = { across: number; depth: number };
 
-// Center-outward fill order for one row: the column nearest the row's centre first,
-// then alternating outward. Cached per `cols` — this codebase only ever calls it with
-// a couple of distinct values, so there's no reason to re-sort every call.
-const fillOrderCache = new Map<number, number[]>();
+export type Plot = {
+  // Painter's order: farthest tile first, nearest last. Slot n belongs to tree index n,
+  // so the newest tree — the one still growing, or the withered one on a stopped session —
+  // is always the nearest and can never be occluded by anything planted behind it.
+  slots: PlotSlot[];
+  cols: number;
+  rows: number;
+  minAcross: number;
+  maxAcross: number;
+  minDepth: number;
+  maxDepth: number;
+};
 
-function centerOutOrder(cols: number): number[] {
-  let order = fillOrderCache.get(cols);
-  if (!order) {
-    const center = (cols - 1) / 2;
-    order = Array.from({ length: cols }, (_, col) => col).sort((a, b) => {
-      const distanceDelta = Math.abs(a - center) - Math.abs(b - center);
-      return distanceDelta !== 0 ? distanceDelta : a - b;
-    });
-    fillOrderCache.set(cols, order);
+const EMPTY_PLOT: Plot = {
+  slots: [],
+  cols: 0,
+  rows: 0,
+  minAcross: 0,
+  maxAcross: 0,
+  minDepth: 0,
+  maxDepth: 0,
+};
+
+// Cached per count — a session only ever asks for a handful of distinct counts, and the
+// plot for a given count never changes.
+const plotCache = new Map<number, Plot>();
+
+// The design source's isometric packing: a square-ish plot of cols x rows cells, walked
+// in depth order. `across` (i - j) is the horizontal axis, `depth` (i + j) runs away from
+// the viewer; both are cell units, turned into pixels by the renderer.
+//
+// The plot grows as area rather than length — 3 trees is a 2x2 plot, 19 is 5x4 — which is
+// what keeps tiles at full size for every preset instead of forcing a choice between
+// shrinking trees and running out of band. The trade-off is deliberate: adding a tree can
+// re-centre the ones already planted, once every five minutes, as the plot squares up.
+export function plotForCount(count: number): Plot {
+  if (count <= 0) return EMPTY_PLOT;
+
+  const cached = plotCache.get(count);
+  if (cached) return cached;
+
+  const cols = Math.ceil(Math.sqrt(count));
+  const rows = Math.ceil(count / cols);
+
+  const cells: PlotSlot[] = [];
+  for (let i = 0; i < cols; i++) {
+    for (let j = 0; j < rows; j++) {
+      cells.push({ across: i - j, depth: i + j });
+    }
   }
-  return order;
-}
+  cells.sort((a, b) => a.depth - b.depth || a.across - b.across);
 
-// Row order: the centre row first, then alternating out — 0, -1, +1, -2, +2, ...
-// Negative is nearer/in-front, positive is farther/behind (see Forest.tsx's paint
-// order). Index-only, no upper bound, so it never needs to know how many rows will
-// eventually exist — unlike columns, rows aren't capped by anything.
-function rowOffsetForRing(ring: number): number {
-  if (ring === 0) return 0;
-  const magnitude = Math.ceil(ring / 2);
-  return ring % 2 === 1 ? -magnitude : magnitude;
-}
+  const slots = cells.slice(0, count);
 
-// Fixed placement: tree index always resolves to the same slot, forever. A new tree
-// only ever starts a new ring (a row, alternating above/below centre) or takes the
-// next centre-outward column in the current row — nothing already planted moves when
-// the count grows. (Deliberately not the reflowing sqrt(count) packing from the design
-// sketch, which would shuffle every already-placed tree's position each time the
-// column count changed.)
-export function slotForIndex(index: number, cols: number): TreeSlot {
-  const posInRow = index % cols;
-  const ring = Math.floor(index / cols);
-  return { col: centerOutOrder(cols)[posInRow], row: rowOffsetForRing(ring) };
+  let minAcross = slots[0].across;
+  let maxAcross = slots[0].across;
+  for (const slot of slots) {
+    if (slot.across < minAcross) minAcross = slot.across;
+    if (slot.across > maxAcross) maxAcross = slot.across;
+  }
+
+  const plot: Plot = {
+    slots,
+    cols,
+    rows,
+    minAcross,
+    maxAcross,
+    // Sorted by depth ascending, so the bounds are just the ends of the list.
+    minDepth: slots[0].depth,
+    maxDepth: slots[slots.length - 1].depth,
+  };
+
+  plotCache.set(count, plot);
+  return plot;
 }
