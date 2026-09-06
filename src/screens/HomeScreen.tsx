@@ -44,7 +44,7 @@ export default function HomeScreen({ onStartTimer }: Props) {
             disabled={selected === null}
             onPress={() => selected !== null && onStartTimer(selected, soundId, notifyEnabled)}
           >
-            <Text style={styles.setTimerLabel}>Set Timer</Text>
+            <Text style={styles.setTimerLabel}>Start Timer</Text>
           </Pressable>
         </View>
       </View>
