@@ -24,6 +24,55 @@
       }
     </style>
 
+    <!--
+      Portrait lock for the web build. app.json's "orientation": "portrait" and this
+      manifest's own "orientation" field only take effect for a native build or an
+      installed home-screen app — neither can stop a plain browser tab from rotating,
+      since the Screen Orientation API's lock() only works in a fullscreen context.
+      This is the standard fallback: a CSS-only prompt, scoped to touch devices via
+      (hover: none) and (pointer: coarse) so it can never trigger on a desktop browser
+      window (which is landscape-shaped by default) — only an actual rotated phone
+      or tablet sees it, and #root (the whole app) is hidden underneath it.
+    -->
+    <style id="portrait-lock">
+      #orientation-lock {
+        display: none;
+      }
+      @media (hover: none) and (pointer: coarse) and (orientation: landscape) {
+        #root {
+          display: none;
+        }
+        #orientation-lock {
+          display: flex;
+          position: fixed;
+          inset: 0;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 12px;
+          padding: 32px;
+          text-align: center;
+          background: #FFFFFF;
+          color: #000000;
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        #orientation-lock .icon {
+          font-size: 40px;
+          transform: rotate(90deg);
+        }
+        #orientation-lock .title {
+          font-size: 18px;
+          font-weight: 700;
+          text-transform: uppercase;
+        }
+        #orientation-lock .subtitle {
+          font-size: 14px;
+          color: #797979;
+          max-width: 280px;
+        }
+      }
+    </style>
+
     <!-- iOS "Add to Home Screen" icon -->
     <link rel="apple-touch-icon" href="apple-touch-icon.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -42,5 +91,12 @@
     </noscript>
     <!-- The root element for your Expo app. -->
     <div id="root"></div>
+
+    <!-- Shown only on a rotated touch device, via the portrait-lock media query above. -->
+    <div id="orientation-lock">
+      <div class="icon">📱</div>
+      <div class="title">Please Rotate Your Device</div>
+      <div class="subtitle">Time Monster is designed for portrait mode.</div>
+    </div>
   </body>
 </html>
